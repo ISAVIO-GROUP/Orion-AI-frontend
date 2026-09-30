@@ -28,7 +28,7 @@
             <label>API Keys</label>
             <table>
                 <thead>
-                    <tr><th>Provider</th><th>Key</th><th>Status</th><th>Usage</th><th>Actions</th></tr>
+                    <tr><th>Provider</th><th>Key</th><th>Status</th><th>Details</th><th>Usage</th><th>Actions</th></tr>
                 </thead>
                 <tbody id="keysTableBody"></tbody>
             </table>
@@ -114,8 +114,29 @@ async function logoutUser() {
     location.href = "index.html";
 }
 
-function statusPillHtml(status) {
-    return `<span class="status-pill ${status}">${status}</span>`;
+// Cooldown keys stay status='active' in the DB (see analyze.js) so the
+// generate route picks them back up automatically — but that means the
+// raw status alone isn't enough to show an admin what's really going on.
+// This computes what to actually display.
+function displayStatus(k) {
+    if (k.status === 'active' && k.cooldown_until && new Date(k.cooldown_until) > new Date()) {
+        return 'cooldown';
+    }
+    return k.status;
+}
+
+function statusPillHtml(k) {
+    const ds = displayStatus(k);
+    return `<span class="status-pill ${ds}">${ds}</span>`;
+}
+
+function formatRelativeTime(iso) {
+    if (!iso) return '';
+    const diffMs = new Date(iso) - new Date();
+    const mins = Math.round(diffMs / 60000);
+    if (mins <= 0) return 'now';
+    if (mins < 60) return `${mins}m`;
+    return `${Math.round(mins / 60)}h`;
 }
 
 // ── INIT: verify admin session ─────────────────────────
@@ -145,11 +166,22 @@ async function loadKeys() {
         const tbody = document.getElementById("keysTableBody");
         tbody.innerHTML = "";
         data.keys.forEach(k => {
+            const ds = displayStatus(k);
+            let details = '<span style="color:var(--text-faint);">—</span>';
+            if (ds === 'cooldown') {
+                details = `<span style="color:var(--text-dim); font-size:12px;">rate-limited, retries in ~${formatRelativeTime(k.cooldown_until)}</span>`;
+            } else if (ds === 'exhausted' && k.last_error) {
+                const when = k.last_error_at ? new Date(k.last_error_at).toLocaleString() : '';
+                details = `<span style="color:var(--danger); font-size:12px;" title="${k.last_error.replace(/"/g,'&quot;')}">${k.last_error.slice(0, 60)}${k.last_error.length > 60 ? '…' : ''}</span>
+                           ${when ? `<br><span style="color:var(--text-faint); font-size:11px;">${when}</span>` : ''}`;
+            }
+
             const tr = document.createElement("tr");
             tr.innerHTML = `
                 <td>${k.provider}</td>
                 <td class="mono">${k.api_key}</td>
-                <td>${statusPillHtml(k.status)}</td>
+                <td>${statusPillHtml(k)}</td>
+                <td>${details}</td>
                 <td>${k.usage_count}</td>
                 <td style="display:flex; gap:6px;">
                     <button class="btn btn-secondary" onclick="toggleKey(${k.id}, '${k.status === 'active' ? 'exhausted' : 'active'}')">
